@@ -1,9 +1,9 @@
 name: ✈️ Flight Price Tracker
 
 on:
-  # 1. Exécution automatique toutes les 3 heures (à 00h00, 03h00, 06h00, 09h00, 12h00, 15h00, 18h00 et 21h00 UTC)
+  # 1. Exécution automatique toutes les 6 heures (décalé à la minute 15 pour éviter les retards de file d'attente GitHub Actions à :00)
   schedule:
-    - cron: '0 */3 * * *'
+    - cron: '15 */6 * * *'
 
   # 2. Exécution manuelle à la demande depuis l'interface GitHub Actions
   workflow_dispatch:
@@ -56,10 +56,10 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: 📦 Installation de fast-flights
+      - name: 📦 Installation des dépendances
         run: |
           python -m pip install --upgrade pip
-          pip install "fast-flights>=3.1.0"
+          pip install -r requirements.txt
 
       - name: 🚀 Exécution du comparateur de vols
         env:
