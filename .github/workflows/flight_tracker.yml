@@ -1,0 +1,78 @@
+name: ✈️ Flight Price Tracker
+
+on:
+  # 1. Exécution automatique toutes les 12h (à 08h00 et 20h00 UTC)
+  schedule:
+    - cron: '0 8,20 * * *'
+
+  # 2. Exécution manuelle à la demande depuis l'interface GitHub Actions
+  workflow_dispatch:
+    inputs:
+      origin_airports:
+        description: 'Aéroports de départ (séparés par une virgule, ex: CDG,ORY,BRU)'
+        required: true
+        default: 'CDG,ORY,BRU'
+      dest_airports:
+        description: 'Aéroports d arrivée (séparés par une virgule, ex: PVG,SHA)'
+        required: true
+        default: 'PVG,SHA'
+      departure_date:
+        description: 'Date d aller cible (YYYY-MM-DD)'
+        required: true
+        default: '2026-10-15'
+      return_date:
+        description: 'Date de retour cible (YYYY-MM-DD)'
+        required: true
+        default: '2026-10-29'
+      delta_days:
+        description: 'Delta de jours autour des dates (+/- N jours)'
+        required: true
+        default: '1'
+      max_stops:
+        description: 'Escales max (vide = peu importe, 0 = direct, 1 = max 1 escale)'
+        required: false
+        default: '1'
+      alert_max_price:
+        description: 'Seuil d alerte en EUR pour ping @here sur Discord (ex: 650)'
+        required: false
+        default: '650'
+      only_notify_under_threshold:
+        description: 'Envoyer sur Discord UNIQUEMENT si le prix est sous le seuil ?'
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  search-cheapest-flights:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 📥 Récupération du code
+        uses: actions/checkout@v4
+
+      - name: 🐍 Configuration de Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 📦 Installation de fast-flights
+        run: |
+          python -m pip install --upgrade pip
+          pip install "fast-flights>=3.1.0"
+
+      - name: 🚀 Exécution du comparateur de vols
+        env:
+          # Priorité aux inputs manuels (workflow_dispatch), sinon Variables GitHub (vars.*), sinon valeur par défaut
+          ORIGIN_AIRPORTS: ${{ inputs.origin_airports || vars.ORIGIN_AIRPORTS || 'CDG,ORY,BRU' }}
+          DEST_AIRPORTS: ${{ inputs.dest_airports || vars.DEST_AIRPORTS || 'PVG,SHA' }}
+          DEPARTURE_DATE: ${{ inputs.departure_date || vars.DEPARTURE_DATE || '2026-10-15' }}
+          RETURN_DATE: ${{ inputs.return_date || vars.RETURN_DATE || '2026-10-29' }}
+          DELTA_DAYS: ${{ inputs.delta_days || vars.DELTA_DAYS || '1' }}
+          MAX_STOPS: ${{ inputs.max_stops || vars.MAX_STOPS || '1' }}
+          ALERT_MAX_PRICE: ${{ inputs.alert_max_price || vars.ALERT_MAX_PRICE || '650' }}
+          ONLY_NOTIFY_UNDER_THRESHOLD: ${{ inputs.only_notify_under_threshold || vars.ONLY_NOTIFY_UNDER_THRESHOLD || 'false' }}
+          CURRENCY: ${{ vars.CURRENCY || 'EUR' }}
+          ADULTS: ${{ vars.ADULTS || '1' }}
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+        run: python track_flights.py
