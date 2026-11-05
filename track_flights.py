@@ -6,7 +6,161 @@ import itertools
 from datetime import datetime, timedelta, timezone
 import urllib.request
 import json
+
 from fast_flights import FlightQuery, Passengers, create_query, get_flights
+import fast_flights.parser
+import fast_flights.fetcher
+from fast_flights.exceptions import FlightsNotFound
+from fast_flights.model import (
+    Airline,
+    Airport,
+    Alliance,
+    CarbonEmission,
+    Flights,
+    JsMetadata,
+    SimpleDatetime,
+    SingleFlight,
+)
+from fast_flights.parser import ResultList, _parse_time
+import primp
+from selectolax.lexbor import LexborHTMLParser
+
+
+# ---------------------------------------------------------------------------
+# Patch de robustesse pour la bibliothèque fast-flights :
+# 1. Évite 'IndexError: list index out of range' quand un vol n'a pas de prix direct.
+# 2. Évite 'TypeError: object is not subscriptable' quand aucun vol n'existe (payload[3] is None).
+# 3. Contourne le mur de cookies Google (SOCS) qui bloque les requêtes européennes.
+# ---------------------------------------------------------------------------
+
+def _safe_parse_js(js: str) -> ResultList:
+    try:
+        data = js.split("data:", 1)[1].rsplit(",", 1)[0]
+    except Exception:
+        return ResultList()
+
+    if data.endswith("errorHasStatus: true"):
+        raise FlightsNotFound("no flights found; received error")
+
+    try:
+        payload = json.loads(data)
+    except Exception:
+        return ResultList()
+
+    alliances = []
+    airlines = []
+    try:
+        if len(payload) > 7 and payload[7] and len(payload[7]) > 1 and payload[7][1]:
+            for code, name in (payload[7][1][0] or []):
+                alliances.append(Alliance(code=code, name=name))
+            for code, name in (payload[7][1][1] or []):
+                airlines.append(Airline(code=code, name=name))
+    except Exception:
+        pass
+
+    meta = JsMetadata(alliances=alliances, airlines=airlines)
+    flights = ResultList()
+
+    if len(payload) <= 3 or payload[3] is None or not payload[3] or payload[3][0] is None:
+        flights.metadata = meta
+        return flights
+
+    for k in payload[3][0]:
+        try:
+            flight = k[0]
+            # Gestion robuste du tarif
+            try:
+                price = k[1][0][1]
+            except (IndexError, TypeError):
+                price = None
+
+            typ = flight[0]
+            flight_airlines = flight[1]
+            sg_flights = []
+
+            for single_flight in flight[2]:
+                from_airport = Airport(code=single_flight[3], name=single_flight[4])
+                to_airport = Airport(code=single_flight[6], name=single_flight[5])
+                departure_time = _parse_time(single_flight[8])
+                departure_date = tuple(single_flight[20])
+                departure = SimpleDatetime(date=departure_date, time=departure_time)
+
+                arrival_time = _parse_time(single_flight[10])
+                arrival_date = tuple(single_flight[21])
+                arrival = SimpleDatetime(date=arrival_date, time=arrival_time)
+
+                plane_type = single_flight[17] if len(single_flight) > 17 else ""
+                duration = single_flight[11] if len(single_flight) > 11 else ""
+
+                sg_flights.append(
+                    SingleFlight(
+                        from_airport=from_airport,
+                        to_airport=to_airport,
+                        departure=departure,
+                        arrival=arrival,
+                        duration=duration,
+                        plane_type=plane_type,
+                    )
+                )
+
+            carbon_emission = None
+            typical_carbon_emission = None
+            if len(flight) > 22 and flight[22]:
+                carbon_emission = flight[22][7] if len(flight[22]) > 7 else None
+                typical_carbon_emission = flight[22][8] if len(flight[22]) > 8 else None
+
+            flights.append(
+                Flights(
+                    type=typ,
+                    price=price,
+                    airlines=flight_airlines,
+                    flights=sg_flights,
+                    carbon=CarbonEmission(
+                        typical_on_route=typical_carbon_emission,
+                        emission=carbon_emission,
+                    ),
+                )
+            )
+        except Exception:
+            continue
+
+    flights.metadata = meta
+    return flights
+
+
+def _safe_parse(html: str) -> ResultList:
+    parser = LexborHTMLParser(html)
+    script = parser.css_first(r"script.ds\:1")
+    if not script:
+        return ResultList()
+    return _safe_parse_js(script.text())
+
+
+def _safe_fetch_flights_html(q, /, *, proxy=None, fetch_integration=None) -> str:
+    if fetch_integration is not None:
+        return fetch_integration.fetch_html(q)
+
+    client = primp.Client(
+        impersonate="chrome_145",
+        impersonate_os="windows",
+        referer=True,
+        proxy=proxy,
+        cookie_store=True,
+    )
+    from fast_flights.querying import Query
+    params = q.params() if isinstance(q, Query) else {"q": q}
+    res = client.get(
+        "https://www.google.com/travel/flights",
+        params=params,
+        cookies={"SOCS": "CAESEwgDEgk2OTg5MjAyNTEaAmZyIAEaBgiA_LyaBg"},
+    )
+    return res.text
+
+
+# Application des correctifs
+fast_flights.parser.parse_js = _safe_parse_js
+fast_flights.parser.parse = _safe_parse
+fast_flights.fetcher.fetch_flights_html = _safe_fetch_flights_html
 
 
 def parse_dates(base_date_str: str, delta: int) -> list[str]:
@@ -255,6 +409,8 @@ def main():
             else:
                 print("   ❌ Aucun vol trouvé.")
 
+        except FlightsNotFound:
+            print("   ℹ️ Aucun vol trouvé pour cette combinaison.")
         except Exception as e:
             print(f"   ⚠️ Erreur sur cette recherche : {e}")
 
