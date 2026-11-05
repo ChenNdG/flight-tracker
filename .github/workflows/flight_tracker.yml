@@ -1,9 +1,9 @@
 name: ✈️ Flight Price Tracker
 
 on:
-  # 1. Exécution automatique toutes les 12h (à 08h00 et 20h00 UTC)
+  # 1. Exécution automatique toutes les 3 heures (à 00h00, 03h00, 06h00, 09h00, 12h00, 15h00, 18h00 et 21h00 UTC)
   schedule:
-    - cron: '0 8,20 * * *'
+    - cron: '0 */3 * * *'
 
   # 2. Exécution manuelle à la demande depuis l'interface GitHub Actions
   workflow_dispatch:
